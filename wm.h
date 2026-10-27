@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <X11/Xlib.h>
 
+typedef struct Adachi_Frame Adachi_Frame;
+
 typedef struct {
     Display *dpy;
     Window root;
@@ -21,10 +23,12 @@ typedef struct {
         size_t capacity;
     } windows;
 
-    Window current;
+    Adachi_Frame *root_frame;
+    Adachi_Frame *frame;
     Window last;
 
     bool waiting;
+    bool resizing;
     bool running;
 } Adachi_WM;
 

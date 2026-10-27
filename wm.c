@@ -15,10 +15,29 @@
 #include <X11/Xutil.h>
 #include <X11/cursorfont.h>
 
-#define ADACHI_ARRAY_LEN(array) (sizeof(array)/sizeof((array)[0]))
+#define ARRAY_LEN(xs) (sizeof(xs)/sizeof((xs)[0]))
+
 #define ADACHI_WINDOW_INIT_CAPACITY 16
 #define ADACHI_NUMLOCK_MASK Mod2Mask
 #define ADACHI_MODS_MASK (ShiftMask | ControlMask | Mod1Mask | Mod4Mask)
+
+typedef enum {
+    FRAME_ROWS,
+    FRAME_COLUMNS,
+} Frame_Orientation;
+
+struct Adachi_Frame {
+    Adachi_Frame *parent;
+    Adachi_Frame *first;
+    Adachi_Frame *second;
+    Frame_Orientation orientation;
+    float ratio;
+    Window window;
+    int x;
+    int y;
+    int width;
+    int height;
+};
 
 typedef void Adachi_Action(Adachi_WM *wm, const char *arg);
 
@@ -35,6 +54,16 @@ static void wm_other(Adachi_WM *wm, const char *arg);
 static void wm_select(Adachi_WM *wm, const char *arg);
 static void wm_kill(Adachi_WM *wm, const char *arg);
 static void wm_quit(Adachi_WM *wm, const char *arg);
+static void wm_split_rows(Adachi_WM *wm, const char *arg);
+static void wm_split_columns(Adachi_WM *wm, const char *arg);
+static void wm_frame_next(Adachi_WM *wm, const char *arg);
+static void wm_frame_left(Adachi_WM *wm, const char *arg);
+static void wm_frame_right(Adachi_WM *wm, const char *arg);
+static void wm_frame_up(Adachi_WM *wm, const char *arg);
+static void wm_frame_down(Adachi_WM *wm, const char *arg);
+static void wm_resize(Adachi_WM *wm, const char *arg);
+static void wm_only(Adachi_WM *wm, const char *arg);
+static void wm_remove(Adachi_WM *wm, const char *arg);
 
 #define ADACHI_BIND(key, action, arg) { key, action, arg },
 static const Adachi_Binding bindings[] = { ADACHI_BINDINGS };
@@ -78,6 +107,103 @@ static void windows_remove(Adachi_WM *wm, size_t index)
     wm->windows.count -= 1;
 }
 
+static Adachi_Frame *frame_new(void)
+{
+    Adachi_Frame *f = calloc(1, sizeof(*f));
+    assert(f != NULL);
+    return f;
+}
+
+static void frame_free(Adachi_Frame *f)
+{
+    if (f == NULL) return;
+    frame_free(f->first);
+    frame_free(f->second);
+    free(f);
+}
+
+static Adachi_Frame *frame_leftmost(Adachi_Frame *f)
+{
+    while (f->first != NULL) f = f->first;
+    return f;
+}
+
+static Adachi_Frame *frame_next(Adachi_Frame *f)
+{
+    for (; f->parent != NULL; f = f->parent) {
+        if (f == f->parent->first) return frame_leftmost(f->parent->second);
+    }
+    return frame_leftmost(f);
+}
+
+static Adachi_Frame *frame_find(Adachi_Frame *f, Window w)
+{
+    if (f->first == NULL) return f->window == w ? f : NULL;
+    Adachi_Frame *found = frame_find(f->first, w);
+    return found != NULL ? found : frame_find(f->second, w);
+}
+
+static Adachi_Frame *frame_at(Adachi_Frame *f, int x, int y)
+{
+    if (x < f->x || x >= f->x + f->width || y < f->y || y >= f->y + f->height) return NULL;
+    if (f->first == NULL) return f;
+    Adachi_Frame *hit = frame_at(f->first, x, y);
+    return hit != NULL ? hit : frame_at(f->second, x, y);
+}
+
+static void frame_adjust_ratio(Adachi_Frame *f, Frame_Orientation orientation, int delta)
+{
+    if (delta == 0) return;
+
+    while (f->parent != NULL && f->parent->orientation != orientation) f = f->parent;
+    Adachi_Frame *parent = f->parent;
+    if (parent == NULL) return;
+
+    int extent = orientation == FRAME_COLUMNS ? parent->width : parent->height;
+    if (extent < 2*ADACHI_FRAME_MIN) return;
+
+    float shift = (float)delta/(float)extent;
+    float min = (float)ADACHI_FRAME_MIN/(float)extent;
+
+    parent->ratio += f == parent->first ? shift : -shift;
+    
+    if (parent->ratio < min) parent->ratio = min;
+    if (parent->ratio > 1.0f - min) parent->ratio = 1.0f - min;
+}
+
+static int window_size(int value)
+{
+    return value > 1 ? value : 1;
+}
+
+static void frame_layout(Adachi_WM *wm, Adachi_Frame *f, int x, int y, int width, int height)
+{
+    f->x = x;
+    f->y = y;
+    f->width = width;
+    f->height = height;
+
+    if (f->first == NULL) {
+        if (f->window == None) return;
+        int border = ADACHI_BORDER_WIDTH;
+        XSetWindowBorder(wm->dpy, f->window, f == wm->frame ? ADACHI_BORDER_FOCUS : ADACHI_BORDER_NORMAL);
+        XMoveResizeWindow(wm->dpy, f->window, x, y,
+                          (unsigned int)window_size(width - 2*border),
+                          (unsigned int)window_size(height - 2*border));
+        return;
+    }
+
+    if (f->orientation == FRAME_COLUMNS) {
+        int first = (int)((float)width*f->ratio);
+        frame_layout(wm, f->first, x, y, first, height);
+        frame_layout(wm, f->second, x + first, y, width - first, height);
+    } else {
+        int first = (int)((float)height*f->ratio);
+        frame_layout(wm, f->first, x, y, width, first);
+        frame_layout(wm, f->second, x, y + first, width, height - first);
+    }
+}
+
 static int wm_error_startup(Display *dpy, XErrorEvent *e)
 {
     (void)dpy;
@@ -108,32 +234,84 @@ static bool wm_find(const Adachi_WM *wm, Window w, size_t *index)
     return false;
 }
 
-static void wm_focus(Adachi_WM *wm, Window w)
+static Window wm_hidden_from(const Adachi_WM *wm, size_t index, bool forward)
 {
-    if (w == None) {
-        wm->current = None;
-        XSetInputFocus(wm->dpy, wm->root, RevertToPointerRoot, CurrentTime);
+    size_t count = wm->windows.count;
+    if (count == 0) return None;
+
+    index %= count;
+    for (size_t i = 0; i < count; ++i) {
+        Window w = wm->windows.items[index];
+        if (frame_find(wm->root_frame, w) == NULL) return w;
+        index = forward ? (index + 1) % count : (index + count - 1) % count;
+    }
+    return None;
+}
+
+static Window wm_hidden_after(const Adachi_WM *wm, Window window, bool forward)
+{
+    size_t count = wm->windows.count;
+    if (count == 0) return None;
+
+    size_t index = 0;
+    if (wm_find(wm, window, &index)) {
+        index = forward ? (index + 1) % count : (index + count - 1) % count;
+    } else {
+        index = forward ? 0 : count - 1;
+    }
+    return wm_hidden_from(wm, index, forward);
+}
+
+static void wm_refresh(Adachi_WM *wm)
+{
+    for (size_t i = 0; i < wm->windows.count; ++i) {
+        Window w = wm->windows.items[i];
+        if (frame_find(wm->root_frame, w) == NULL) XMoveWindow(wm->dpy, w, -2*wm->width, 0);
+    }
+
+    frame_layout(wm, wm->root_frame, 0, 0, wm->width, wm->height);
+
+    Window w = wm->frame->window;
+    XSetInputFocus(wm->dpy, w != None ? w : wm->root, RevertToPointerRoot, CurrentTime);
+}
+
+static void wm_focus_frame(Adachi_WM *wm, Adachi_Frame *frame)
+{
+    Window old = wm->frame->window;
+    wm->frame = frame;
+    if (old != None && old != frame->window) wm->last = old;
+    wm_refresh(wm);
+}
+
+static void wm_show_window(Adachi_WM *wm, Window window)
+{
+    Adachi_Frame *frame = frame_find(wm->root_frame, window);
+    if (frame == NULL) {
+        Window old = wm->frame->window;
+        wm->frame->window = window;
+        if (old != None && old != window) wm->last = old;
+        wm_refresh(wm);
         return;
     }
+    wm_focus_frame(wm, frame);
+}
 
-    if (w != wm->current) {
-        wm->last = wm->current;
-        wm->current = w;
-    }
-
-    XMoveResizeWindow(wm->dpy, w, 0, 0, (unsigned int)wm->width, (unsigned int)wm->height);
-    XRaiseWindow(wm->dpy, w);
-    XSetInputFocus(wm->dpy, w, RevertToPointerRoot, CurrentTime);
+static void frame_replace(Adachi_WM *wm, Adachi_Frame *from, Adachi_Frame *to)
+{
+    to->parent = from->parent;
+    if (from->parent == NULL) wm->root_frame = to;
+    else if (from->parent->first == from) from->parent->first = to;
+    else from->parent->second = to;
 }
 
 static void wm_manage(Adachi_WM *wm, Window w)
 {
     if (!wm_find(wm, w, NULL)) {
-        XSetWindowBorderWidth(wm->dpy, w, 0);
+        XSetWindowBorderWidth(wm->dpy, w, ADACHI_BORDER_WIDTH);
         windows_append(wm, w);
     }
     XMapWindow(wm->dpy, w);
-    wm_focus(wm, w);
+    wm_show_window(wm, w);
 }
 
 static void wm_unmanage(Adachi_WM *wm, Window w)
@@ -143,15 +321,19 @@ static void wm_unmanage(Adachi_WM *wm, Window w)
 
     windows_remove(wm, index);
     if (wm->last == w) wm->last = None;
-    if (wm->current != w) return;
+
+    Adachi_Frame *f = frame_find(wm->root_frame, w);
+    if (f == NULL) return;
 
     Window next = wm->last;
-    if (next == None && wm->windows.count > 0) {
-        size_t i = index < wm->windows.count ? index : wm->windows.count - 1;
-        next = wm->windows.items[i];
+    if (next == None || frame_find(wm->root_frame, next) != NULL) {
+        next = wm_hidden_from(wm, index, true);
     }
-    wm->current = None;
-    wm_focus(wm, next);
+
+    if (next == wm->last) wm->last = None;
+    
+    f->window = next;
+    wm_refresh(wm);
 }
 
 static void wm_scan(Adachi_WM *wm)
@@ -189,12 +371,48 @@ static bool wm_supports_delete(const Adachi_WM *wm, Window w)
     return result;
 }
 
-static void wm_cycle(Adachi_WM *wm, size_t offset)
+static void wm_cycle(Adachi_WM *wm, bool forward)
 {
-    if (wm->windows.count == 0) return;
-    size_t index = 0;
-    wm_find(wm, wm->current, &index);
-    wm_focus(wm, wm->windows.items[(index + offset) % wm->windows.count]);
+    Window window = wm_hidden_after(wm, wm->frame->window, forward);
+    if (window != None) wm_show_window(wm, window);
+}
+
+static void wm_split(Adachi_WM *wm, Frame_Orientation orientation)
+{
+    Adachi_Frame *f = wm->frame;
+    int extent = orientation == FRAME_COLUMNS ? f->width : f->height;
+    if (extent < 2*ADACHI_FRAME_MIN) return;
+
+    Adachi_Frame *parent = frame_new();
+    Adachi_Frame *sibling = frame_new();
+
+    frame_replace(wm, f, parent);
+    parent->orientation = orientation;
+    parent->ratio = 0.5f;
+    parent->first = f;
+    parent->second = sibling;
+    f->parent = parent;
+    sibling->parent = parent;
+
+    sibling->window = wm_hidden_after(wm, f->window, true);
+    wm_refresh(wm);
+}
+
+static void wm_frame_direction(Adachi_WM *wm, int dx, int dy)
+{
+    Adachi_Frame *f = wm->frame;
+    int x = f->x + f->width/2 + dx*(f->width/2 + 1);
+    int y = f->y + f->height/2 + dy*(f->height/2 + 1);
+
+    Adachi_Frame *target = frame_at(wm->root_frame, x, y);
+    if (target != NULL) wm_focus_frame(wm, target);
+}
+
+static void wm_adjust_frame(Adachi_WM *wm, int dx, int dy)
+{
+    frame_adjust_ratio(wm->frame, FRAME_COLUMNS, dx);
+    frame_adjust_ratio(wm->frame, FRAME_ROWS, dy);
+    wm_refresh(wm);
 }
 
 static void wm_spawn(Adachi_WM *wm, const char *command)
@@ -223,46 +441,47 @@ static void wm_exec(Adachi_WM *wm, const char *arg)
 static void wm_next(Adachi_WM *wm, const char *arg)
 {
     (void)arg;
-    wm_cycle(wm, 1);
+    wm_cycle(wm, true);
 }
 
 static void wm_prev(Adachi_WM *wm, const char *arg)
 {
     (void)arg;
-    wm_cycle(wm, wm->windows.count - 1);
+    wm_cycle(wm, false);
 }
 
 static void wm_other(Adachi_WM *wm, const char *arg)
 {
     (void)arg;
-    if (wm->last != None && wm_find(wm, wm->last, NULL)) wm_focus(wm, wm->last);
+    if (wm->last != None && wm_find(wm, wm->last, NULL)) wm_show_window(wm, wm->last);
 }
 
 static void wm_select(Adachi_WM *wm, const char *arg)
 {
     if (arg == NULL) return;
     size_t index = strtoul(arg, NULL, 10);
-    if (index < wm->windows.count) wm_focus(wm, wm->windows.items[index]);
+    if (index < wm->windows.count) wm_show_window(wm, wm->windows.items[index]);
 }
 
 static void wm_kill(Adachi_WM *wm, const char *arg)
 {
     (void)arg;
-    if (wm->current == None) return;
+    Window w = wm->frame->window;
+    if (w == None) return;
 
-    if (!wm_supports_delete(wm, wm->current)) {
-        XKillClient(wm->dpy, wm->current);
+    if (!wm_supports_delete(wm, w)) {
+        XKillClient(wm->dpy, w);
         return;
     }
 
     XEvent e = {0};
     e.xclient.type = ClientMessage;
-    e.xclient.window = wm->current;
+    e.xclient.window = w;
     e.xclient.message_type = wm->wm_protocols;
     e.xclient.format = 32;
     e.xclient.data.l[0] = (long)wm->wm_delete;
     e.xclient.data.l[1] = CurrentTime;
-    XSendEvent(wm->dpy, wm->current, False, NoEventMask, &e);
+    XSendEvent(wm->dpy, w, False, NoEventMask, &e);
 }
 
 static void wm_quit(Adachi_WM *wm, const char *arg)
@@ -271,11 +490,98 @@ static void wm_quit(Adachi_WM *wm, const char *arg)
     wm->running = false;
 }
 
+static void wm_split_rows(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    wm_split(wm, FRAME_ROWS);
+}
+
+static void wm_split_columns(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    wm_split(wm, FRAME_COLUMNS);
+}
+
+static void wm_frame_next(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    wm_focus_frame(wm, frame_next(wm->frame));
+}
+
+static void wm_frame_left(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    wm_frame_direction(wm, -1, 0);
+}
+
+static void wm_frame_right(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    wm_frame_direction(wm, 1, 0);
+}
+
+static void wm_frame_up(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    wm_frame_direction(wm, 0, -1);
+}
+
+static void wm_frame_down(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    wm_frame_direction(wm, 0, 1);
+}
+
+static void wm_resize(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    if (wm->root_frame->first == NULL) return;
+
+    int status = XGrabKeyboard(wm->dpy, wm->root, False, GrabModeAsync, GrabModeAsync, CurrentTime);
+    if (status != GrabSuccess) {
+        log_error("Could not grab the keyboard (status %d)", status);
+        return;
+    }
+    wm->resizing = true;
+}
+
+static void wm_only(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    Adachi_Frame *old_root = wm->root_frame;
+    Adachi_Frame *only = frame_new();
+    only->window = wm->frame->window;
+
+    wm->root_frame = only;
+    wm->frame = only;
+    frame_free(old_root);
+    wm_refresh(wm);
+}
+
+static void wm_remove(Adachi_WM *wm, const char *arg)
+{
+    (void)arg;
+    Adachi_Frame *f = wm->frame;
+    Adachi_Frame *parent = f->parent;
+    if (parent == NULL) return;
+
+    Adachi_Frame *sibling = parent->first == f ? parent->second : parent->first;
+    Adachi_Frame *target = frame_leftmost(sibling);
+    Window old = f->window;
+
+    frame_replace(wm, parent, sibling);
+    wm->frame = target;
+    if (old != None && old != target->window) wm->last = old;
+    free(f);
+    free(parent);
+    wm_refresh(wm);
+}
+
 static void wm_grab_prefix(Adachi_WM *wm)
 {
     KeyCode code = XKeysymToKeycode(wm->dpy, ADACHI_PREFIX_KEY);
     unsigned int locks[] = { 0, LockMask, ADACHI_NUMLOCK_MASK, LockMask | ADACHI_NUMLOCK_MASK };
-    for (size_t i = 0; i < ADACHI_ARRAY_LEN(locks); ++i) {
+    for (size_t i = 0; i < ARRAY_LEN(locks); ++i) {
         XGrabKey(wm->dpy, code, ADACHI_PREFIX_MOD | locks[i], wm->root, False, GrabModeAsync, GrabModeAsync);
     }
 }
@@ -283,6 +589,20 @@ static void wm_grab_prefix(Adachi_WM *wm)
 static void wm_on_key_press(Adachi_WM *wm, XKeyEvent *e)
 {
     KeySym key = XLookupKeysym(e, (e->state & ShiftMask) ? 1 : 0);
+
+    if (wm->resizing) {
+        if (IsModifierKey(key)) return;
+        switch (key) {
+        case XK_Left:  wm_adjust_frame(wm, -ADACHI_RESIZE_STEP, 0); break;
+        case XK_Right: wm_adjust_frame(wm,  ADACHI_RESIZE_STEP, 0); break;
+        case XK_Up:    wm_adjust_frame(wm, 0, -ADACHI_RESIZE_STEP); break;
+        case XK_Down:  wm_adjust_frame(wm, 0,  ADACHI_RESIZE_STEP); break;
+        default:
+            XUngrabKeyboard(wm->dpy, CurrentTime);
+            wm->resizing = false;
+        }
+        return;
+    }
 
     if (!wm->waiting) {
         if (key != ADACHI_PREFIX_KEY || (e->state & ADACHI_MODS_MASK) != ADACHI_PREFIX_MOD) return;
@@ -300,7 +620,7 @@ static void wm_on_key_press(Adachi_WM *wm, XKeyEvent *e)
     XUngrabKeyboard(wm->dpy, CurrentTime);
     wm->waiting = false;
 
-    for (size_t i = 0; i < ADACHI_ARRAY_LEN(bindings); ++i) {
+    for (size_t i = 0; i < ARRAY_LEN(bindings); ++i) {
         if (bindings[i].key == key) {
             bindings[i].action(wm, bindings[i].arg);
             return;
@@ -311,16 +631,19 @@ static void wm_on_key_press(Adachi_WM *wm, XKeyEvent *e)
 static void wm_on_configure_request(Adachi_WM *wm, XConfigureRequestEvent *e)
 {
     if (wm_find(wm, e->window, NULL)) {
+        XWindowAttributes attr = {0};
+        if (!XGetWindowAttributes(wm->dpy, e->window, &attr)) return;
+
         XConfigureEvent ce = {
             .type = ConfigureNotify,
             .display = wm->dpy,
             .event = e->window,
             .window = e->window,
-            .x = 0,
-            .y = 0,
-            .width = wm->width,
-            .height = wm->height,
-            .border_width = 0,
+            .x = attr.x,
+            .y = attr.y,
+            .width = attr.width,
+            .height = attr.height,
+            .border_width = attr.border_width,
             .above = None,
             .override_redirect = False,
         };
@@ -386,7 +709,10 @@ bool adachi_wm_init(Adachi_WM *wm)
 
     XDefineCursor(wm->dpy, wm->root, XCreateFontCursor(wm->dpy, XC_left_ptr));
     wm_grab_prefix(wm);
-    wm_focus(wm, None);
+
+    wm->root_frame = frame_new();
+    wm->frame = wm->root_frame;
+    wm_refresh(wm);
     wm_scan(wm);
     XSync(wm->dpy, False);
     return true;
@@ -411,6 +737,7 @@ void adachi_wm_run(Adachi_WM *wm)
 
 void adachi_wm_free(Adachi_WM *wm)
 {
+    frame_free(wm->root_frame);
     free(wm->windows.items);
     if (wm->dpy != NULL) XCloseDisplay(wm->dpy);
     *wm = (Adachi_WM) {0};
