@@ -24,3 +24,5 @@ Frames:
 - `r`: resize the current frame, then use the arrow keys and press any other key to finish
 - `Q`: keep only the current frame
 - `R`: remove the current frame
+
+![Adachi screenshot](assets/adachi.png)
