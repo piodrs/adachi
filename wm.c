@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #define AX_IMPLEMENTATION
-#include "axiom.h"
+#include "./thirdparty/axiom/axiom.h"
 
 #include "wm.h"
 #include "config.h"
