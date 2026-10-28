@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <X11/Xlib.h>
 
-#include "./thirdparty/axiom/axiom.h"
+#include "./thirdparty/axiom.h"
 
 typedef struct Adachi_Frame Adachi_Frame;
 

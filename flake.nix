@@ -28,7 +28,7 @@
               ./main.c
               ./wm.c
               ./wm.h
-              ./thirdparty/axiom/axiom.h
+              ./thirdparty/axiom.h
               ./config.h
               ./build.sh
             ];

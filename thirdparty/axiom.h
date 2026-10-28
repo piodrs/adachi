@@ -30,10 +30,6 @@
 #define AX_ARRAY_START 8
 #endif // AX_ARRAY_START
 
-#ifndef AX_ARENA_CAP
-#define AX_ARENA_CAP (8*1024)
-#endif // AX_ARENA_CAP
-
 #define AX_UNUSED(x) ((void) (x))
 #define AX_ARRAY_LEN(xs) (sizeof(xs)/sizeof((xs)[0]))
 
@@ -58,32 +54,6 @@ AXDEF void ax_array_release(Ax_Array *array);
 AXDEF void ax_sb_append_cstr(Ax_Array *sb, const char *text);
 AXDEF void ax_sb_appendf(Ax_Array *sb, const char *format, ...);
 AXDEF char *ax_sb_cstr(Ax_Array *sb);
-
-typedef struct Ax_Region Ax_Region;
-
-struct Ax_Region {
-    Ax_Region *next;
-    size_t count;
-    size_t capacity;
-    uintptr_t data[];
-};
-
-typedef struct {
-    Ax_Region *begin;
-    Ax_Region *end;
-} Ax_Arena;
-
-typedef struct {
-    Ax_Region *region;
-    size_t count;
-} Ax_Arena_Mark;
-
-AXDEF void *ax_arena_alloc(Ax_Arena *arena, size_t size);
-AXDEF char *ax_arena_strdup(Ax_Arena *arena, const char *text);
-AXDEF Ax_Arena_Mark ax_arena_mark(const Ax_Arena *arena);
-AXDEF void ax_arena_rewind(Ax_Arena *arena, Ax_Arena_Mark mark);
-AXDEF void ax_arena_reset(Ax_Arena *arena);
-AXDEF void ax_arena_free(Ax_Arena *arena);
 
 typedef struct {
     size_t count;
@@ -189,73 +159,6 @@ AXDEF char *ax_sb_cstr(Ax_Array *sb)
     ax_array_reserve(sb, sb->length + 1);
     ((char *) sb->data)[sb->length] = '\0';
     return sb->data;
-}
-
-AXDEF void *ax_arena_alloc(Ax_Arena *arena, size_t size)
-{
-    AX_ASSERT(size <= SIZE_MAX - sizeof(uintptr_t));
-    size_t words = (size + sizeof(uintptr_t) - 1)/sizeof(uintptr_t);
-
-    while (arena->end != NULL && arena->end->count + words > arena->end->capacity && arena->end->next != NULL) {
-        arena->end = arena->end->next;
-    }
-
-    if (arena->end == NULL || arena->end->count + words > arena->end->capacity) {
-        size_t capacity = words > AX_ARENA_CAP ? words : AX_ARENA_CAP;
-        Ax_Region *region = AX_REALLOC(NULL, sizeof(*region) + capacity*sizeof(uintptr_t));
-        AX_ASSERT(region != NULL && "Out of memory :<");
-        *region = (Ax_Region) { .capacity = capacity };
-        if (arena->end == NULL) arena->begin = region;
-        else arena->end->next = region;
-        arena->end = region;
-    }
-
-    void *result = arena->end->data + arena->end->count;
-    arena->end->count += words;
-    memset(result, 0, words*sizeof(uintptr_t));
-    return result;
-}
-
-AXDEF char *ax_arena_strdup(Ax_Arena *arena, const char *text)
-{
-    size_t count = strlen(text) + 1;
-    return memcpy(ax_arena_alloc(arena, count), text, count);
-}
-
-AXDEF Ax_Arena_Mark ax_arena_mark(const Ax_Arena *arena)
-{
-    return (Ax_Arena_Mark) {
-        .region = arena->end,
-        .count = arena->end != NULL ? arena->end->count : 0,
-    };
-}
-
-AXDEF void ax_arena_rewind(Ax_Arena *arena, Ax_Arena_Mark mark)
-{
-    if (mark.region == NULL) {
-        ax_arena_reset(arena);
-        return;
-    }
-    mark.region->count = mark.count;
-    for (Ax_Region *r = mark.region->next; r != NULL; r = r->next) r->count = 0;
-    arena->end = mark.region;
-}
-
-AXDEF void ax_arena_reset(Ax_Arena *arena)
-{
-    for (Ax_Region *r = arena->begin; r != NULL; r = r->next) r->count = 0;
-    arena->end = arena->begin;
-}
-
-AXDEF void ax_arena_free(Ax_Arena *arena)
-{
-    Ax_Region *r = arena->begin;
-    while (r != NULL) {
-        Ax_Region *next = r->next;
-        AX_FREE(r);
-        r = next;
-    }
-    *arena = (Ax_Arena) {0};
 }
 
 AXDEF Ax_String_View ax_sv_from_cstr(const char *text)
