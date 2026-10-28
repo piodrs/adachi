@@ -1,9 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 
+#define AX_IMPLEMENTATION
+#include "axiom.h"
+
 #include "wm.h"
 #include "config.h"
 
-#include <assert.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -15,9 +17,6 @@
 #include <X11/Xutil.h>
 #include <X11/cursorfont.h>
 
-#define ARRAY_LEN(xs) (sizeof(xs)/sizeof((xs)[0]))
-
-#define ADACHI_WINDOW_INIT_CAPACITY 16
 #define ADACHI_NUMLOCK_MASK Mod2Mask
 #define ADACHI_MODS_MASK (ShiftMask | ControlMask | Mod1Mask | Mod4Mask)
 
@@ -87,30 +86,10 @@ static void log_error(const char *fmt, ...)
     fprintf(stderr, "\n");
 }
 
-static void windows_append(Adachi_WM *wm, Window window)
-{
-    if (wm->windows.count == wm->windows.capacity) {
-        size_t capacity = wm->windows.capacity == 0 ? ADACHI_WINDOW_INIT_CAPACITY : wm->windows.capacity*2;
-
-        Window *items = realloc(wm->windows.items, capacity*sizeof(*items));
-        assert(items != NULL);
-        wm->windows.items = items;
-        wm->windows.capacity = capacity;
-    }
-    wm->windows.items[wm->windows.count++] = window;
-}
-
-static void windows_remove(Adachi_WM *wm, size_t index)
-{
-    assert(index < wm->windows.count);
-    memmove(&wm->windows.items[index], &wm->windows.items[index + 1], (wm->windows.count - index - 1)*sizeof(*wm->windows.items));
-    wm->windows.count -= 1;
-}
-
 static Adachi_Frame *frame_new(void)
 {
     Adachi_Frame *f = calloc(1, sizeof(*f));
-    assert(f != NULL);
+    AX_ASSERT(f != NULL);
     return f;
 }
 
@@ -206,8 +185,8 @@ static void frame_layout(Adachi_WM *wm, Adachi_Frame *f, int x, int y, int width
 
 static int wm_error_startup(Display *dpy, XErrorEvent *e)
 {
-    (void)dpy;
-    (void)e;
+    AX_UNUSED(dpy);
+    AX_UNUSED(e);
     wm_other_running = true;
     return 0;
 }
@@ -225,8 +204,9 @@ static int wm_error(Display *dpy, XErrorEvent *e)
 
 static bool wm_find(const Adachi_WM *wm, Window w, size_t *index)
 {
-    for (size_t i = 0; i < wm->windows.count; ++i) {
-        if (wm->windows.items[i] == w) {
+    Window *windows = wm->windows.data;
+    for (size_t i = 0; i < wm->windows.length; ++i) {
+        if (windows[i] == w) {
             if (index != NULL) *index = i;
             return true;
         }
@@ -236,12 +216,12 @@ static bool wm_find(const Adachi_WM *wm, Window w, size_t *index)
 
 static Window wm_hidden_from(const Adachi_WM *wm, size_t index, bool forward)
 {
-    size_t count = wm->windows.count;
+    size_t count = wm->windows.length;
     if (count == 0) return None;
 
     index %= count;
     for (size_t i = 0; i < count; ++i) {
-        Window w = wm->windows.items[index];
+        Window w = *ax_array_at_as(&wm->windows, index, Window);
         if (frame_find(wm->root_frame, w) == NULL) return w;
         index = forward ? (index + 1) % count : (index + count - 1) % count;
     }
@@ -250,7 +230,7 @@ static Window wm_hidden_from(const Adachi_WM *wm, size_t index, bool forward)
 
 static Window wm_hidden_after(const Adachi_WM *wm, Window window, bool forward)
 {
-    size_t count = wm->windows.count;
+    size_t count = wm->windows.length;
     if (count == 0) return None;
 
     size_t index = 0;
@@ -264,8 +244,9 @@ static Window wm_hidden_after(const Adachi_WM *wm, Window window, bool forward)
 
 static void wm_refresh(Adachi_WM *wm)
 {
-    for (size_t i = 0; i < wm->windows.count; ++i) {
-        Window w = wm->windows.items[i];
+    Window *windows = wm->windows.data;
+    for (size_t i = 0; i < wm->windows.length; ++i) {
+        Window w = windows[i];
         if (frame_find(wm->root_frame, w) == NULL) XMoveWindow(wm->dpy, w, -2*wm->width, 0);
     }
 
@@ -308,7 +289,7 @@ static void wm_manage(Adachi_WM *wm, Window w)
 {
     if (!wm_find(wm, w, NULL)) {
         XSetWindowBorderWidth(wm->dpy, w, ADACHI_BORDER_WIDTH);
-        windows_append(wm, w);
+        ax_array_push_value(&wm->windows, Window, w);
     }
     XMapWindow(wm->dpy, w);
     wm_show_window(wm, w);
@@ -319,7 +300,7 @@ static void wm_unmanage(Adachi_WM *wm, Window w)
     size_t index = 0;
     if (!wm_find(wm, w, &index)) return;
 
-    windows_remove(wm, index);
+    ax_array_remove(&wm->windows, index);
     if (wm->last == w) wm->last = None;
 
     Adachi_Frame *f = frame_find(wm->root_frame, w);
@@ -440,19 +421,19 @@ static void wm_exec(Adachi_WM *wm, const char *arg)
 
 static void wm_next(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm_cycle(wm, true);
 }
 
 static void wm_prev(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm_cycle(wm, false);
 }
 
 static void wm_other(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     if (wm->last != None && wm_find(wm, wm->last, NULL)) wm_show_window(wm, wm->last);
 }
 
@@ -460,12 +441,12 @@ static void wm_select(Adachi_WM *wm, const char *arg)
 {
     if (arg == NULL) return;
     size_t index = strtoul(arg, NULL, 10);
-    if (index < wm->windows.count) wm_show_window(wm, wm->windows.items[index]);
+    if (index < wm->windows.length) wm_show_window(wm, *ax_array_at_as(&wm->windows, index, Window));
 }
 
 static void wm_kill(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     Window w = wm->frame->window;
     if (w == None) return;
 
@@ -486,55 +467,55 @@ static void wm_kill(Adachi_WM *wm, const char *arg)
 
 static void wm_quit(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm->running = false;
 }
 
 static void wm_split_rows(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm_split(wm, FRAME_ROWS);
 }
 
 static void wm_split_columns(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm_split(wm, FRAME_COLUMNS);
 }
 
 static void wm_frame_next(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm_focus_frame(wm, frame_next(wm->frame));
 }
 
 static void wm_frame_left(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm_frame_direction(wm, -1, 0);
 }
 
 static void wm_frame_right(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm_frame_direction(wm, 1, 0);
 }
 
 static void wm_frame_up(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm_frame_direction(wm, 0, -1);
 }
 
 static void wm_frame_down(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     wm_frame_direction(wm, 0, 1);
 }
 
 static void wm_resize(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     if (wm->root_frame->first == NULL) return;
 
     int status = XGrabKeyboard(wm->dpy, wm->root, False, GrabModeAsync, GrabModeAsync, CurrentTime);
@@ -547,7 +528,7 @@ static void wm_resize(Adachi_WM *wm, const char *arg)
 
 static void wm_only(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     Adachi_Frame *old_root = wm->root_frame;
     Adachi_Frame *only = frame_new();
     only->window = wm->frame->window;
@@ -560,7 +541,7 @@ static void wm_only(Adachi_WM *wm, const char *arg)
 
 static void wm_remove(Adachi_WM *wm, const char *arg)
 {
-    (void)arg;
+    AX_UNUSED(arg);
     Adachi_Frame *f = wm->frame;
     Adachi_Frame *parent = f->parent;
     if (parent == NULL) return;
@@ -581,7 +562,7 @@ static void wm_grab_prefix(Adachi_WM *wm)
 {
     KeyCode code = XKeysymToKeycode(wm->dpy, ADACHI_PREFIX_KEY);
     unsigned int locks[] = { 0, LockMask, ADACHI_NUMLOCK_MASK, LockMask | ADACHI_NUMLOCK_MASK };
-    for (size_t i = 0; i < ARRAY_LEN(locks); ++i) {
+    for (size_t i = 0; i < AX_ARRAY_LEN(locks); ++i) {
         XGrabKey(wm->dpy, code, ADACHI_PREFIX_MOD | locks[i], wm->root, False, GrabModeAsync, GrabModeAsync);
     }
 }
@@ -620,7 +601,7 @@ static void wm_on_key_press(Adachi_WM *wm, XKeyEvent *e)
     XUngrabKeyboard(wm->dpy, CurrentTime);
     wm->waiting = false;
 
-    for (size_t i = 0; i < ARRAY_LEN(bindings); ++i) {
+    for (size_t i = 0; i < AX_ARRAY_LEN(bindings); ++i) {
         if (bindings[i].key == key) {
             bindings[i].action(wm, bindings[i].arg);
             return;
@@ -666,6 +647,7 @@ static void wm_on_configure_request(Adachi_WM *wm, XConfigureRequestEvent *e)
 
 bool adachi_wm_init(Adachi_WM *wm)
 {
+    wm->windows = ax_array(Window);
     wm->dpy = XOpenDisplay(NULL);
     if (wm->dpy == NULL) {
         log_error("Could not open the X display");
@@ -738,7 +720,7 @@ void adachi_wm_run(Adachi_WM *wm)
 void adachi_wm_free(Adachi_WM *wm)
 {
     frame_free(wm->root_frame);
-    free(wm->windows.items);
+    ax_array_release(&wm->windows);
     if (wm->dpy != NULL) XCloseDisplay(wm->dpy);
     *wm = (Adachi_WM) {0};
 }

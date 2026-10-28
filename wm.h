@@ -2,8 +2,9 @@
 #define ADACHI_WM_H_
 
 #include <stdbool.h>
-#include <stddef.h>
 #include <X11/Xlib.h>
+
+#include "axiom.h"
 
 typedef struct Adachi_Frame Adachi_Frame;
 
@@ -17,11 +18,7 @@ typedef struct {
     Atom wm_protocols;
     Atom wm_delete;
 
-    struct {
-        Window *items;
-        size_t count;
-        size_t capacity;
-    } windows;
+    Ax_Array windows;
 
     Adachi_Frame *root_frame;
     Adachi_Frame *frame;

@@ -20,7 +20,7 @@
         }:
         stdenv.mkDerivation {
           pname = "adachi";
-          version = "0.2.0";
+          version = "0.2.1";
 
           src = lib.fileset.toSource {
             root = ./.;
@@ -28,6 +28,7 @@
               ./main.c
               ./wm.c
               ./wm.h
+              ./axiom.h
               ./config.h
               ./build.sh
             ];
