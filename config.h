@@ -17,8 +17,8 @@
 #define ADACHI_STARTUP_COMMANDS
 
 #define ADACHI_BINDINGS                                   \
-    ADACHI_BIND(XK_c,      wm_exec,          "xterm")     \
-    ADACHI_BIND(XK_exclam, wm_exec,          "dmenu_run") \
+    ADACHI_BIND(XK_c,      wm_spawn,         "xterm")     \
+    ADACHI_BIND(XK_exclam, wm_spawn,         "dmenu_run") \
     ADACHI_BIND(XK_n,      wm_next,          NULL)        \
     ADACHI_BIND(XK_space,  wm_next,          NULL)        \
     ADACHI_BIND(XK_p,      wm_prev,          NULL)        \

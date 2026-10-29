@@ -46,7 +46,7 @@ typedef struct {
     const char *arg;
 } Adachi_Binding;
 
-static void wm_exec(Adachi_WM *wm, const char *arg);
+static void wm_spawn(Adachi_WM *wm, const char *command);
 static void wm_next(Adachi_WM *wm, const char *arg);
 static void wm_prev(Adachi_WM *wm, const char *arg);
 static void wm_other(Adachi_WM *wm, const char *arg);
@@ -144,10 +144,8 @@ static void frame_adjust_ratio(Adachi_Frame *f, Frame_Orientation orientation, i
     float shift = (float)delta/(float)extent;
     float min = (float)ADACHI_FRAME_MIN/(float)extent;
 
-    parent->ratio += f == parent->first ? shift : -shift;
-    
-    if (parent->ratio < min) parent->ratio = min;
-    if (parent->ratio > 1.0f - min) parent->ratio = 1.0f - min;
+    float ratio = parent->ratio + (f == parent->first ? shift : -shift);
+    parent->ratio = ax_clampf(ratio, min, 1.0f - min);
 }
 
 static int window_size(int value)
@@ -312,7 +310,7 @@ static void wm_unmanage(Adachi_WM *wm, Window w)
     }
 
     if (next == wm->last) wm->last = None;
-    
+
     f->window = next;
     wm_refresh(wm);
 }
@@ -396,6 +394,14 @@ static void wm_adjust_frame(Adachi_WM *wm, int dx, int dy)
     wm_refresh(wm);
 }
 
+static bool wm_grab_keyboard(Adachi_WM *wm)
+{
+    int status = XGrabKeyboard(wm->dpy, wm->root, False, GrabModeAsync, GrabModeAsync, CurrentTime);
+    if (status == GrabSuccess) return true;
+    log_error("Could not grab the keyboard (status %d)", status);
+    return false;
+}
+
 static void wm_spawn(Adachi_WM *wm, const char *command)
 {
     if (command == NULL) return;
@@ -412,11 +418,6 @@ static void wm_spawn(Adachi_WM *wm, const char *command)
     signal(SIGCHLD, SIG_DFL);
     execl("/bin/sh", "sh", "-c", command, (char *)NULL);
     _exit(127);
-}
-
-static void wm_exec(Adachi_WM *wm, const char *arg)
-{
-    wm_spawn(wm, arg);
 }
 
 static void wm_next(Adachi_WM *wm, const char *arg)
@@ -517,12 +518,7 @@ static void wm_resize(Adachi_WM *wm, const char *arg)
 {
     AX_UNUSED(arg);
     if (wm->root_frame->first == NULL) return;
-
-    int status = XGrabKeyboard(wm->dpy, wm->root, False, GrabModeAsync, GrabModeAsync, CurrentTime);
-    if (status != GrabSuccess) {
-        log_error("Could not grab the keyboard (status %d)", status);
-        return;
-    }
+    if (!wm_grab_keyboard(wm)) return;
     wm->resizing = true;
 }
 
@@ -587,11 +583,7 @@ static void wm_on_key_press(Adachi_WM *wm, XKeyEvent *e)
 
     if (!wm->waiting) {
         if (key != ADACHI_PREFIX_KEY || (e->state & ADACHI_MODS_MASK) != ADACHI_PREFIX_MOD) return;
-        int status = XGrabKeyboard(wm->dpy, wm->root, False, GrabModeAsync, GrabModeAsync, CurrentTime);
-        if (status != GrabSuccess) {
-            log_error("Could not grab the keyboard (status %d)", status);
-            return;
-        }
+        if (!wm_grab_keyboard(wm)) return;
         wm->waiting = true;
         return;
     }
@@ -678,7 +670,7 @@ bool adachi_wm_init(Adachi_WM *wm)
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    
+
     sa.sa_handler = SIG_IGN;
     sa.sa_flags = SA_NOCLDSTOP | SA_NOCLDWAIT | SA_RESTART;
 

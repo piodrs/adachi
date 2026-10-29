@@ -34,6 +34,11 @@
 #define AX_ARRAY_LEN(xs) (sizeof(xs)/sizeof((xs)[0]))
 
 typedef struct {
+    size_t count;
+    const char *data;
+} Ax_String_View;
+
+typedef struct {
     void *data;
     size_t length;
     size_t stride;
@@ -45,26 +50,26 @@ typedef struct {
 #define ax_array_at_as(array, index, Type) ((Type *) ax_array_at((array), (index)))
 
 AXDEF void ax_array_reserve(Ax_Array *array, size_t length);
+AXDEF void ax_array_resize(Ax_Array *array, size_t length);
+AXDEF void ax_array_clear(Ax_Array *array);
 AXDEF void *ax_array_push(Ax_Array *array);
 AXDEF void ax_array_write(Ax_Array *array, const void *items, size_t count);
 AXDEF void *ax_array_at(const Ax_Array *array, size_t index);
 AXDEF void ax_array_remove(Ax_Array *array, size_t index);
 AXDEF void ax_array_release(Ax_Array *array);
 
+AXDEF void ax_sb_append_char(Ax_Array *sb, char value);
 AXDEF void ax_sb_append_cstr(Ax_Array *sb, const char *text);
+AXDEF void ax_sb_append_sv(Ax_Array *sb, Ax_String_View sv);
 AXDEF void ax_sb_appendf(Ax_Array *sb, const char *format, ...);
 AXDEF char *ax_sb_cstr(Ax_Array *sb);
-
-typedef struct {
-    size_t count;
-    const char *data;
-} Ax_String_View;
 
 #define AX_SV_FMT "%.*s"
 #define AX_SV_ARG(sv) (int) (sv).count, (sv).data
 #define ax_sv_lit(text) ((Ax_String_View) { .count = sizeof(text) - 1, .data = (text) })
 
 AXDEF Ax_String_View ax_sv_from_cstr(const char *text);
+AXDEF Ax_String_View ax_sv_from_parts(const char *data, size_t count);
 AXDEF Ax_String_View ax_sv_trim(Ax_String_View sv);
 AXDEF Ax_String_View ax_sv_chop_left(Ax_String_View *sv, size_t count);
 AXDEF Ax_String_View ax_sv_chop_by_delim(Ax_String_View *sv, char delim);
@@ -72,6 +77,7 @@ AXDEF bool ax_sv_chop_u64(Ax_String_View *sv, uint64_t *value);
 AXDEF bool ax_sv_eq(Ax_String_View a, Ax_String_View b);
 AXDEF bool ax_sv_starts_with(Ax_String_View sv, Ax_String_View prefix);
 AXDEF bool ax_sv_ends_with(Ax_String_View sv, Ax_String_View suffix);
+AXDEF float ax_clampf(float value, float minimum, float maximum);
 
 #ifdef AX_IMPLEMENTATION
 
@@ -93,6 +99,17 @@ AXDEF void ax_array_reserve(Ax_Array *array, size_t length)
     array->data = AX_REALLOC(array->data, storage*array->stride);
     AX_ASSERT(array->data != NULL && "Out of memory :<");
     array->storage = storage;
+}
+
+AXDEF void ax_array_resize(Ax_Array *array, size_t length)
+{
+    ax_array_reserve(array, length);
+    array->length = length;
+}
+
+AXDEF void ax_array_clear(Ax_Array *array)
+{
+    array->length = 0;
 }
 
 AXDEF void *ax_array_push(Ax_Array *array)
@@ -131,10 +148,22 @@ AXDEF void ax_array_release(Ax_Array *array)
     *array = (Ax_Array) {0};
 }
 
+AXDEF void ax_sb_append_char(Ax_Array *sb, char value)
+{
+    AX_ASSERT(sb->stride == sizeof(char));
+    ax_array_push_value(sb, char, value);
+}
+
 AXDEF void ax_sb_append_cstr(Ax_Array *sb, const char *text)
 {
     AX_ASSERT(sb->stride == sizeof(char));
     ax_array_write(sb, text, strlen(text));
+}
+
+AXDEF void ax_sb_append_sv(Ax_Array *sb, Ax_String_View sv)
+{
+    AX_ASSERT(sb->stride == sizeof(char));
+    ax_array_write(sb, sv.data, sv.count);
 }
 
 AXDEF void ax_sb_appendf(Ax_Array *sb, const char *format, ...)
@@ -163,7 +192,12 @@ AXDEF char *ax_sb_cstr(Ax_Array *sb)
 
 AXDEF Ax_String_View ax_sv_from_cstr(const char *text)
 {
-    return (Ax_String_View) { .count = strlen(text), .data = text };
+    return ax_sv_from_parts(text, strlen(text));
+}
+
+AXDEF Ax_String_View ax_sv_from_parts(const char *data, size_t count)
+{
+    return (Ax_String_View) { .count = count, .data = data };
 }
 
 AXDEF Ax_String_View ax_sv_trim(Ax_String_View sv)
@@ -223,6 +257,14 @@ AXDEF bool ax_sv_ends_with(Ax_String_View sv, Ax_String_View suffix)
     if (suffix.count > sv.count) return false;
     ax_sv_chop_left(&sv, sv.count - suffix.count);
     return ax_sv_eq(sv, suffix);
+}
+
+AXDEF float ax_clampf(float value, float minimum, float maximum)
+{
+    AX_ASSERT(minimum <= maximum);
+    if (value < minimum) return minimum;
+    if (value > maximum) return maximum;
+    return value;
 }
 
 #endif // AX_IMPLEMENTATION

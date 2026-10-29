@@ -1,15 +1,13 @@
 {
-  description = "Adachi minimal X11 window manager";
+  description = "Adachi minimal X11 tilling window manager";
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs/26.05";
 
   outputs =
-    { self, nixpkgs, ... }:
+    { nixpkgs, ... }:
     let
-      systems = [
-        "x86_64-linux"
-      ];
-      forAllSystems = nixpkgs.lib.genAttrs systems;
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
 
       mkAdachi =
         {
@@ -20,7 +18,7 @@
         }:
         stdenv.mkDerivation {
           pname = "adachi";
-          version = "0.2.1";
+          version = "0.2.2";
 
           src = lib.fileset.toSource {
             root = ./.;
@@ -55,51 +53,42 @@
           '';
 
           meta = {
-            description = "Minimal fullscreen window manager for X11, inspired by Ratpoison";
+            description = "Minimal tilling window manager for X11, inspired by Ratpoison";
             license = lib.licenses.mit;
             mainProgram = "adachi";
             platforms = lib.platforms.linux;
           };
         };
+
+      adachi = pkgs.callPackage mkAdachi { };
     in
     {
-      packages = forAllSystems (system: {
-        default = nixpkgs.legacyPackages.${system}.callPackage mkAdachi { };
-      });
+      packages.${system}.default = adachi;
 
       overlays.default = final: _prev: {
         adachi = final.callPackage mkAdachi { };
       };
 
-      apps = forAllSystems (system: {
-        default = {
-          type = "app";
-          program = nixpkgs.lib.getExe self.packages.${system}.default;
-          meta.description = "Run the Adachi window manager";
+      apps.${system}.default = {
+        type = "app";
+        program = nixpkgs.lib.getExe adachi;
+        meta.description = "Run the Adachi window manager";
+      };
+
+      checks.${system}.build = adachi;
+
+      formatter.${system} = pkgs.nixfmt;
+
+      devShells.${system} = {
+        default = pkgs.mkShell {
+          inputsFrom = [ adachi ];
+          packages = with pkgs; [
+            gcc
+            gdb
+            xorg-server
+            xterm
+          ];
         };
-      });
-
-      checks = forAllSystems (system: {
-        build = self.packages.${system}.default;
-      });
-
-      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);
-
-      devShells = forAllSystems (
-        system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-        in
-        {
-          default = pkgs.mkShell {
-            inputsFrom = [ self.packages.${system}.default ];
-            packages = with pkgs; [
-              gdb
-              xorg-server
-              xterm
-            ];
-          };
-        }
-      );
+      };
     };
 }
