@@ -25,4 +25,9 @@ Frames:
 - `Q`: keep only the current frame
 - `R`: remove the current frame
 
+Workspaces do not use the `Ctrl+t` prefix:
+
+- `Alt+1`-`Alt+9`: switch workspace
+- `Alt+Shift+1`-`Alt+Shift+9`: move the current window to a workspace
+
 ![Adachi screenshot](assets/adachi.png)

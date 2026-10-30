@@ -7,6 +7,9 @@
 #define ADACHI_PREFIX_KEY XK_t
 #define ADACHI_PREFIX_MOD ControlMask
 
+#define ADACHI_WORKSPACES    9
+#define ADACHI_WORKSPACE_MOD Mod1Mask
+
 #define ADACHI_BORDER_WIDTH  1
 #define ADACHI_BORDER_FOCUS  0x5f87af
 #define ADACHI_BORDER_NORMAL 0x303030
@@ -45,5 +48,7 @@
     ADACHI_BIND(XK_7,      wm_select,        "7")         \
     ADACHI_BIND(XK_8,      wm_select,        "8")         \
     ADACHI_BIND(XK_9,      wm_select,        "9")
+
+_Static_assert(ADACHI_WORKSPACES >= 1 && ADACHI_WORKSPACES <= 9, "ADACHI_WORKSPACES must be between 1 and 9");
 
 #endif // ADACHI_CONFIG_H_

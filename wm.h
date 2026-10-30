@@ -5,8 +5,16 @@
 #include <X11/Xlib.h>
 
 #include "./thirdparty/axiom.h"
+#include "config.h"
 
 typedef struct Adachi_Frame Adachi_Frame;
+
+typedef struct {
+    Ax_Array windows;
+    Adachi_Frame *root_frame;
+    Adachi_Frame *frame;
+    Window last;
+} Adachi_Workspace;
 
 typedef struct {
     Display *dpy;
@@ -18,11 +26,8 @@ typedef struct {
     Atom wm_protocols;
     Atom wm_delete;
 
-    Ax_Array windows;
-
-    Adachi_Frame *root_frame;
-    Adachi_Frame *frame;
-    Window last;
+    Adachi_Workspace workspaces[ADACHI_WORKSPACES];
+    Adachi_Workspace *workspace;
 
     bool waiting;
     bool resizing;
