@@ -11,7 +11,8 @@ Press `Ctrl+t`, release it, then press:
 - `n` or `Space`: show the next hidden window in the current frame
 - `p`: show the previous hidden window in the current frame
 - `t`: show the last window
-- `0`-`9`: show a window by index (focuses its frame if it is already visible)
+- `1`-`9`: switch workspace
+- `Shift+1`-`Shift+9`: move the current window to a workspace
 - `k`: close the current window
 - `q`: quit Adachi
 
@@ -24,10 +25,5 @@ Frames:
 - `r`: resize the current frame, then use the arrow keys and press any other key to finish
 - `Q`: keep only the current frame
 - `R`: remove the current frame
-
-Workspaces do not use the `Ctrl+t` prefix:
-
-- `Alt+1`-`Alt+9`: switch workspace
-- `Alt+Shift+1`-`Alt+Shift+9`: move the current window to a workspace
 
 ![Adachi screenshot](assets/adachi.png)

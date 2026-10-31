@@ -50,7 +50,6 @@ static void wm_spawn(Adachi_WM *wm, const char *command);
 static void wm_next(Adachi_WM *wm, const char *arg);
 static void wm_prev(Adachi_WM *wm, const char *arg);
 static void wm_other(Adachi_WM *wm, const char *arg);
-static void wm_select(Adachi_WM *wm, const char *arg);
 static void wm_kill(Adachi_WM *wm, const char *arg);
 static void wm_quit(Adachi_WM *wm, const char *arg);
 static void wm_split_rows(Adachi_WM *wm, const char *arg);
@@ -500,15 +499,6 @@ static void wm_other(Adachi_WM *wm, const char *arg)
     }
 }
 
-static void wm_select(Adachi_WM *wm, const char *arg)
-{
-    if (arg == NULL) return;
-    size_t index = strtoul(arg, NULL, 10);
-    if (index < wm->workspace->windows.length) {
-        wm_show_window(wm, *ax_array_at_as(&wm->workspace->windows, index, Window));
-    }
-}
-
 static void wm_kill(Adachi_WM *wm, const char *arg)
 {
     AX_UNUSED(arg);
@@ -618,35 +608,25 @@ static void wm_remove(Adachi_WM *wm, const char *arg)
     wm_refresh(wm);
 }
 
-static void wm_grab_key(Adachi_WM *wm, KeySym key, unsigned int modifiers)
+static void wm_grab_prefix(Adachi_WM *wm)
 {
-    KeyCode code = XKeysymToKeycode(wm->dpy, key);
+    KeyCode code = XKeysymToKeycode(wm->dpy, ADACHI_PREFIX_KEY);
     unsigned int locks[] = { 0, LockMask, ADACHI_NUMLOCK_MASK, LockMask | ADACHI_NUMLOCK_MASK };
     for (size_t i = 0; i < AX_ARRAY_LEN(locks); ++i) {
-        XGrabKey(wm->dpy, code, modifiers | locks[i], wm->root, False, GrabModeAsync, GrabModeAsync);
-    }
-}
-
-static void wm_grab_keys(Adachi_WM *wm)
-{
-    wm_grab_key(wm, ADACHI_PREFIX_KEY, ADACHI_PREFIX_MOD);
-    for (size_t i = 0; i < ADACHI_WORKSPACES; ++i) {
-        wm_grab_key(wm, XK_1 + i, ADACHI_WORKSPACE_MOD);
-        wm_grab_key(wm, XK_1 + i, ADACHI_WORKSPACE_MOD | ShiftMask);
+        XGrabKey(wm->dpy, code, ADACHI_PREFIX_MOD | locks[i], wm->root, False, GrabModeAsync, GrabModeAsync);
     }
 }
 
 static bool wm_on_workspace_key(Adachi_WM *wm, XKeyEvent *e)
 {
-    unsigned int mods = e->state & ADACHI_MODS_MASK;
-    bool move = mods == (ADACHI_WORKSPACE_MOD | ShiftMask);
-    if (mods != ADACHI_WORKSPACE_MOD && !move) return false;
+    unsigned int modifiers = e->state & ADACHI_MODS_MASK;
+    if (modifiers != 0 && modifiers != ShiftMask) return false;
 
     KeySym key = XLookupKeysym(e, 0);
     if (key < XK_1 || key >= XK_1 + ADACHI_WORKSPACES) return false;
 
     Adachi_Workspace *workspace = &wm->workspaces[key - XK_1];
-    if (move) wm_move_to_workspace(wm, workspace);
+    if (modifiers == ShiftMask) wm_move_to_workspace(wm, workspace);
     else wm_switch_workspace(wm, workspace);
     return true;
 }
@@ -670,7 +650,6 @@ static void wm_on_key_press(Adachi_WM *wm, XKeyEvent *e)
     }
 
     if (!wm->waiting) {
-        if (wm_on_workspace_key(wm, e)) return;
         if (key != ADACHI_PREFIX_KEY || (e->state & ADACHI_MODS_MASK) != ADACHI_PREFIX_MOD) return;
         if (!wm_grab_keyboard(wm)) return;
         wm->waiting = true;
@@ -681,6 +660,8 @@ static void wm_on_key_press(Adachi_WM *wm, XKeyEvent *e)
 
     XUngrabKeyboard(wm->dpy, CurrentTime);
     wm->waiting = false;
+
+    if (wm_on_workspace_key(wm, e)) return;
 
     for (size_t i = 0; i < AX_ARRAY_LEN(bindings); ++i) {
         if (bindings[i].key == key) {
@@ -770,7 +751,7 @@ bool adachi_wm_init(Adachi_WM *wm)
     }
 
     XDefineCursor(wm->dpy, wm->root, XCreateFontCursor(wm->dpy, XC_left_ptr));
-    wm_grab_keys(wm);
+    wm_grab_prefix(wm);
 
     for (size_t i = 0; i < ADACHI_WORKSPACES; ++i) {
         workspace_init(&wm->workspaces[i]);
@@ -792,8 +773,8 @@ void adachi_wm_run(Adachi_WM *wm)
         case MapRequest:       wm_manage(wm, e.xmaprequest.window);                break;
         case UnmapNotify:      wm_unmanage(wm, e.xunmap.window);                   break;
         case DestroyNotify:    wm_unmanage(wm, e.xdestroywindow.window);           break;
-        case ConfigureRequest: wm_on_configure_request(wm, &e.xconfigurerequest);       break;
-        case KeyPress:         wm_on_key_press(wm, &e.xkey);                            break;
+        case ConfigureRequest: wm_on_configure_request(wm, &e.xconfigurerequest);   break;
+        case KeyPress:         wm_on_key_press(wm, &e.xkey);                        break;
         default: break;
         }
     }
