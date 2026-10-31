@@ -1,5 +1,5 @@
 {
-  description = "Adachi minimal X11 tilling window manager";
+  description = "Adachi minimal X11 tiling window manager";
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs/26.05";
 
@@ -18,7 +18,7 @@
         }:
         stdenv.mkDerivation {
           pname = "adachi";
-          version = "0.3.0";
+          version = "0.3.1";
 
           src = lib.fileset.toSource {
             root = ./.;
@@ -26,6 +26,12 @@
               ./main.c
               ./wm.c
               ./wm.h
+              ./keys.c
+              ./keys.h
+              ./workspace.c
+              ./workspace.h
+              ./frame.c
+              ./frame.h
               ./thirdparty/axiom.h
               ./config.h
               ./build.sh
@@ -53,7 +59,7 @@
           '';
 
           meta = {
-            description = "Minimal tilling window manager for X11, inspired by Ratpoison";
+            description = "Minimal tiling window manager for X11, inspired by Ratpoison";
             license = lib.licenses.mit;
             mainProgram = "adachi";
             platforms = lib.platforms.linux;
