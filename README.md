@@ -7,7 +7,7 @@ A minimal tiling window manager for X11, built around Ratpoison-style frames
 Press `Ctrl+t`, release it, then press:
 
 - `c`: open `xterm`
-- `!`: open `dmenu_run`
+- `d`: open `dmenu_run`
 - `n` or `Space`: show the next hidden window in the current frame
 - `p`: show the previous hidden window in the current frame
 - `t`: show the last window

@@ -20,7 +20,7 @@
 
 #define ADACHI_BINDINGS                                       \
     ADACHI_BIND(XK_c,      action_spawn,         "xterm")     \
-    ADACHI_BIND(XK_exclam, action_spawn,         "dmenu_run") \
+    ADACHI_BIND(XK_d,      action_spawn,         "dmenu_run") \
     ADACHI_BIND(XK_n,      action_next,          NULL)        \
     ADACHI_BIND(XK_space,  action_next,          NULL)        \
     ADACHI_BIND(XK_p,      action_prev,          NULL)        \
