@@ -18,21 +18,14 @@
         }:
         stdenv.mkDerivation {
           pname = "adachi";
-          version = "0.3.1";
+          version = "0.4.0";
 
           src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
               ./main.c
-              ./wm.c
-              ./wm.h
-              ./keys.c
-              ./keys.h
-              ./workspace.c
-              ./workspace.h
-              ./frame.c
-              ./frame.h
-              ./thirdparty/axiom.h
+              ./adachi.c
+              ./adachi.h
               ./config.h
               ./build.sh
             ];

@@ -1,4 +1,4 @@
-#include "wm.h"
+#include "adachi.h"
 
 int main(void)
 {
